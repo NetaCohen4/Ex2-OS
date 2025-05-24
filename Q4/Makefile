@@ -1,12 +1,12 @@
 CC=gcc
 CFLAGS=-Wall -Wextra -std=c99
-TARGETS=bar_drinks atom_supplier molecule_requester
+TARGETS=drinks_bar atom_supplier molecule_requester
 
 
 all: $(TARGETS)
 
-bar_drinks: bar_drinks.c
-	$(CC) $(CFLAGS) -o bar_drinks bar_drinks.c
+drinks_bar: drinks_bar.c
+	$(CC) $(CFLAGS) -o drinks_bar drinks_bar.c
 
 atom_supplier: atom_supplier.c
 	$(CC) $(CFLAGS)  -D_POSIX_C_SOURCE=200112L -o atom_supplier atom_supplier.c

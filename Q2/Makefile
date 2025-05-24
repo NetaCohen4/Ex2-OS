@@ -1,18 +1,18 @@
 CC=gcc
 CFLAGS=-Wall -Wextra -std=c99
-TARGETS=atom_warehouse atom_supplier requester_molecule
+TARGETS=molecule_supplier atom_supplier molecule_requester
 
 
 all: $(TARGETS)
 
-atom_warehouse: atom_warehouse.c
-	$(CC) $(CFLAGS) -o atom_warehouse atom_warehouse.c
+molecule_supplier: molecule_supplier.c
+	$(CC) $(CFLAGS) -o molecule_supplier molecule_supplier.c
 
 atom_supplier: atom_supplier.c
 	$(CC) $(CFLAGS)  -D_POSIX_C_SOURCE=200112L -o atom_supplier atom_supplier.c
 
-requester_molecule: requester_molecule.c
-	$(CC) $(CFLAGS)  -D_POSIX_C_SOURCE=200112L -o requester_molecule requester_molecule.c
+molecule_requester: molecule_requester.c
+	$(CC) $(CFLAGS)  -D_POSIX_C_SOURCE=200112L -o molecule_requester molecule_requester.c
 
 clean:
 	rm -f $(TARGETS)

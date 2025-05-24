@@ -7,6 +7,10 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <netinet/in.h>
+#include <signal.h>
+#include <getopt.h>
+#include <time.h>
+
 
 #define MAX_CLIENTS  FD_SETSIZE
 #define BUFFER_SIZE 1024
@@ -121,13 +125,46 @@ void handle_console_command(const char *cmd) {
 
 
 int main(int argc, char *argv[]) {
-    if (argc != 3) {
-        fprintf(stderr, "Usage: %s <TCP_PORT> <UDP_PORT>\n", argv[0]);
+    int tcp_port = -1, udp_port = -1;
+    int initial_c = 0, initial_h = 0, initial_o = 0;
+    int timeout = 0;
+
+    static struct option long_options[] = {
+        {"tcp-port", required_argument, 0, 'T'},
+        {"udp-port", required_argument, 0, 'U'},
+        {"carbon", required_argument, 0, 'c'},
+        {"oxygen", required_argument, 0, 'o'},
+        {"hydrogen", required_argument, 0, 'h'},
+        {"timeout", required_argument, 0, 't'},
+        {0, 0, 0, 0}
+    };
+
+    int opt;
+    
+    while ((opt = getopt_long(argc, argv, ":T:U:c:o:h:t:", long_options, NULL)) != -1) {
+        switch (opt) {
+            case 'T': tcp_port = atoi(optarg); break;
+            case 'U': udp_port = atoi(optarg); break;
+            case 'c': initial_c = atoi(optarg); break;
+            case 'h': initial_h = atoi(optarg); break;
+            case 'o': initial_o = atoi(optarg); break;
+            case 't': timeout = atoi(optarg); break;
+            case -1: break;
+            case '?': printf("Unknown option: %c\n", optopt); break;
+            default:
+                fprintf(stderr, "Usage: %s -T <tcp_port> -U <udp_port> [--carbon X] [--oxygen Y] [--hydrogen Z] [--timeout T]\n", argv[0]);
+                exit(EXIT_FAILURE);
+        }
+    }
+    if (tcp_port < 0 || udp_port < 0) {
+        fprintf(stderr, "ERROR: TCP and UDP ports are required.\n");
         exit(EXIT_FAILURE);
     }
 
-    int tcp_port = atoi(argv[1]);
-    int udp_port = atoi(argv[2]);
+    carbon = initial_c;
+    hydrogen = initial_h;
+    oxygen = initial_o;
+
 
     int tcp_socket, new_socket, udp_socket;
     struct sockaddr_in tcp_addr, udp_addr, client_addr;
@@ -144,8 +181,8 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    int opt = 1;
-    setsockopt(tcp_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    int optt = 1;
+    setsockopt(tcp_socket, SOL_SOCKET, SO_REUSEADDR, &optt, sizeof(optt));
 
     tcp_addr.sin_family = AF_INET;
     tcp_addr.sin_addr.s_addr = INADDR_ANY;
@@ -185,6 +222,7 @@ int main(int argc, char *argv[]) {
     fd_set readfds;
     int max_fd;
 
+    time_t last_activity = time(NULL);
     while (1) {
         FD_ZERO(&readfds);
         FD_SET(tcp_socket, &readfds);
@@ -205,7 +243,12 @@ int main(int argc, char *argv[]) {
                 max_fd = sd;
         }
         
-        int activity = select(max_fd + 1, &readfds, NULL, NULL, NULL);
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
+        int activity = select(max_fd + 1, &readfds, NULL, NULL, &tv);
+        
         if (activity < 0 && errno != EINTR) {
             perror("select error");
             continue;
@@ -243,6 +286,7 @@ int main(int argc, char *argv[]) {
                     client_sockets[i] = -1;
                 } else {
                     handle_command_tcp(buffer);
+                    last_activity = time(NULL);
                 }
             }
         }
@@ -268,6 +312,8 @@ int main(int argc, char *argv[]) {
 
                 // Send response back to the UDP client
                 sendto(udp_socket, response, strlen(response), 0, (struct sockaddr *)&client_addr, client_len);
+
+                last_activity = time(NULL);
             }
         }
 
@@ -278,8 +324,26 @@ int main(int argc, char *argv[]) {
                 // הסר תו ירידת שורה
                 input[strcspn(input, "\n")] = '\0';
                 handle_console_command(input);
+                last_activity = time(NULL);
             }
         }
+
+        // if (timeout > 0) {
+        //     time_t now = time(NULL);
+        //     if (difftime(now, last_activity) >= timeout) {
+        //         printf("Timeout reached with no activity. Exiting.\n");
+        //         break;
+        //     }
+        // }
+
+        time_t now = time(NULL);
+        int time_left = timeout - (int)difftime(now, last_activity);
+        if (time_left <= 0) {
+            printf("Timeout reached with no activity. Exiting.\n");
+            break;
+        }
+        tv.tv_sec = time_left;
+        tv.tv_usec = 0;
 
     }
 
