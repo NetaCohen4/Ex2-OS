@@ -145,5 +145,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Cleanup
+    close(server_fd);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (client_sockets[i] != -1) {
+            close(client_sockets[i]);
+        }
+    }
+
     return 0;
 }

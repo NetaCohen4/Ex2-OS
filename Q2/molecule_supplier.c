@@ -89,7 +89,7 @@ int main(int argc, char *argv[]) {
     int tcp_port = atoi(argv[1]);
     int udp_port = atoi(argv[2]);
 
-    int server_fd, new_socket, udp_socket;
+    int tcp_socket, new_socket, udp_socket;
     struct sockaddr_in tcp_addr, udp_addr, client_addr;
     socklen_t addrlen = sizeof(tcp_addr);
     socklen_t client_len = sizeof(client_addr);
@@ -99,27 +99,27 @@ int main(int argc, char *argv[]) {
         client_sockets[i] = -1;
 
     // TCP socket
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    if ((tcp_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("TCP socket failed");
         exit(EXIT_FAILURE);
     }
 
     int opt = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(tcp_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     tcp_addr.sin_family = AF_INET;
     tcp_addr.sin_addr.s_addr = INADDR_ANY;
     tcp_addr.sin_port = htons(tcp_port);
 
-    if (bind(server_fd, (struct sockaddr *)&tcp_addr, sizeof(tcp_addr)) < 0) {
+    if (bind(tcp_socket, (struct sockaddr *)&tcp_addr, sizeof(tcp_addr)) < 0) {
         perror("TCP bind failed");
-        close(server_fd);
+        close(tcp_socket);
         exit(EXIT_FAILURE);
     }
 
-    if (listen(server_fd, SOMAXCONN) < 0) {
+    if (listen(tcp_socket, SOMAXCONN) < 0) {
         perror("listen failed");
-        close(server_fd);
+        close(tcp_socket);
         exit(EXIT_FAILURE);
     }
 
@@ -147,9 +147,9 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         FD_ZERO(&readfds);
-        FD_SET(server_fd, &readfds);
+        FD_SET(tcp_socket, &readfds);
         FD_SET(udp_socket, &readfds);
-        max_fd = (server_fd > udp_socket) ? server_fd : udp_socket;
+        max_fd = (tcp_socket > udp_socket) ? tcp_socket : udp_socket;
 
         for (int i = 0; i < MAX_CLIENTS; i++) {
             int sd = client_sockets[i];
@@ -166,8 +166,8 @@ int main(int argc, char *argv[]) {
         }
 
         // New TCP connection
-        if (FD_ISSET(server_fd, &readfds)) {
-            if ((new_socket = accept(server_fd, (struct sockaddr *)&tcp_addr, &addrlen)) < 0) {
+        if (FD_ISSET(tcp_socket, &readfds)) {
+            if ((new_socket = accept(tcp_socket, (struct sockaddr *)&tcp_addr, &addrlen)) < 0) {
                 perror("accept");
                 continue;
             }
@@ -225,6 +225,15 @@ int main(int argc, char *argv[]) {
             }
         }
 
+    }
+
+    // Cleanup
+    close(tcp_socket);
+    close(udp_socket);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (client_sockets[i] != -1) {
+            close(client_sockets[i]);
+        }
     }
 
     return 0;

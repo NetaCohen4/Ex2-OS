@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-Wall -Wextra -std=c99
-TARGETS=drinks_bar atom_supplier molecule_requester
+TARGETS=drinks_bar atom_supplier molecule_requester test
 
 
 all: $(TARGETS)
@@ -13,6 +13,9 @@ atom_supplier: atom_supplier.c
 
 molecule_requester: molecule_requester.c
 	$(CC) $(CFLAGS)  -D_POSIX_C_SOURCE=200112L -o molecule_requester molecule_requester.c
+
+test: test.c
+	$(CC) $(CFLAGS) -o test test.c
 
 clean:
 	rm -f $(TARGETS)

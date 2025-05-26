@@ -283,5 +283,14 @@ int main(int argc, char *argv[]) {
 
     }
 
+    // Cleanup
+    close(tcp_socket);
+    close(udp_socket);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (client_sockets[i] != -1) {
+            close(client_sockets[i]);
+        }
+    }
+
     return 0;
 }
