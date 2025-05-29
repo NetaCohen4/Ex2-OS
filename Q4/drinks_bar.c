@@ -149,7 +149,7 @@ int main(int argc, char *argv[]) {
             case -1: break;
             case '?': printf("Unknown option: %c\n", optopt); break;
             default:
-                fprintf(stderr, "Usage: %s -T <tcp_port> -U <udp_port> [--carbon X] [--oxygen Y] [--hydrogen Z] [--timeout T]\n", argv[0]);
+                fprintf(stderr, "Usage: %s -T <tcp_port> -U <udp_port> [--carbon c] [--oxygen o] [--hydrogen h] [--timeout t]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
