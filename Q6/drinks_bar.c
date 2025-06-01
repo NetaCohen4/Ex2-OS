@@ -12,8 +12,11 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <sys/time.h>
+#include <pthread.h>
+#include <sys/mman.h>
 
 
+#define _GNU_SOURCE
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 100
 #define MAX_ATOMS 1000000000000000000ULL // 10^18
@@ -25,12 +28,44 @@ typedef struct {
     unsigned long long hydrogen;
 } AtomInventory;
 
+typedef struct {
+    pthread_mutex_t lock;
+    AtomInventory inv;
+} SharedInventory;
+
 // משתנים גלובליים
 AtomInventory inventory = {0, 0, 0};
 int tcp_port = -1, udp_port = -1;
 char *uds_stream_path = NULL;
 char *uds_dgram_path = NULL;
+char *inventory_file_path = NULL;
 int timeout_seconds = 0;
+
+void setup_inventory_from_file(const char *file_path) {
+    int fd = open(file_path, O_RDWR | O_CREAT, 0666);
+    if (fd < 0) {
+        perror("open");
+        exit(EXIT_FAILURE);
+    }
+
+    if (ftruncate(fd, sizeof(AtomInventory)) == -1) {
+        perror("ftruncate");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    void *map = mmap(NULL, sizeof(AtomInventory),
+                     PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (map == MAP_FAILED) {
+        perror("mmap");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+    close(fd);
+
+    //inventory = (AtomInventory *)map;
+}
+
 
 // פונקציות עזר למלאי
 void print_inventory() {
@@ -89,42 +124,50 @@ void deliver_molecules(const char *molecule, unsigned long long amount) {
     }
 }
 
-void handle_console_command(const char *cmd) {
-    if (strncmp(cmd, "GEN ", 4) != 0) {
-        printf("ERROR: Unknown console command\n");
-        return;
+unsigned long long calculate_max_drinks(const char *drink_type) {
+    unsigned long long max_drinks = 0;
+    
+    if (strcmp(drink_type, "SOFT_DRINK") == 0) {
+        // מים + CO2 + גלוקוז
+        unsigned long long water_possible = (inventory.hydrogen >= 2 && inventory.oxygen >= 1) ? 
+            (inventory.hydrogen / 2 < inventory.oxygen ? inventory.hydrogen / 2 : inventory.oxygen) : 0;
+        unsigned long long co2_possible = (inventory.carbon >= 1 && inventory.oxygen >= 2) ? 
+            (inventory.carbon < inventory.oxygen / 2 ? inventory.carbon : inventory.oxygen / 2) : 0;
+        unsigned long long glucose_possible = (inventory.carbon >= 6 && inventory.hydrogen >= 12 && inventory.oxygen >= 6) ? 
+            (inventory.carbon / 6 < inventory.hydrogen / 12 ? 
+             (inventory.carbon / 6 < inventory.oxygen / 6 ? inventory.carbon / 6 : inventory.oxygen / 6) :
+             (inventory.hydrogen / 12 < inventory.oxygen / 6 ? inventory.hydrogen / 12 : inventory.oxygen / 6)) : 0;
+        
+        max_drinks = (water_possible < co2_possible ? 
+                     (water_possible < glucose_possible ? water_possible : glucose_possible) :
+                     (co2_possible < glucose_possible ? co2_possible : glucose_possible));
+    } else if (strcmp(drink_type, "VODKA") == 0) {
+        // מים + אלכוהול
+        unsigned long long water_possible = (inventory.hydrogen >= 2 && inventory.oxygen >= 1) ? 
+            (inventory.hydrogen / 2 < inventory.oxygen ? inventory.hydrogen / 2 : inventory.oxygen) : 0;
+        unsigned long long alcohol_possible = (inventory.carbon >= 2 && inventory.hydrogen >= 6 && inventory.oxygen >= 1) ? 
+            (inventory.carbon / 2 < inventory.hydrogen / 6 ? 
+             (inventory.carbon / 2 < inventory.oxygen ? inventory.carbon / 2 : inventory.oxygen) :
+             (inventory.hydrogen / 6 < inventory.oxygen ? inventory.hydrogen / 6 : inventory.oxygen)) : 0;
+        
+        max_drinks = (water_possible < alcohol_possible ? water_possible : alcohol_possible);
+    } else if (strcmp(drink_type, "CHAMPAGNE") == 0) {
+        // מים + CO2 + אלכוהול
+        unsigned long long water_possible = (inventory.hydrogen >= 2 && inventory.oxygen >= 1) ? 
+            (inventory.hydrogen / 2 < inventory.oxygen ? inventory.hydrogen / 2 : inventory.oxygen) : 0;
+        unsigned long long co2_possible = (inventory.carbon >= 1 && inventory.oxygen >= 2) ? 
+            (inventory.carbon < inventory.oxygen / 2 ? inventory.carbon : inventory.oxygen / 2) : 0;
+        unsigned long long alcohol_possible = (inventory.carbon >= 2 && inventory.hydrogen >= 6 && inventory.oxygen >= 1) ? 
+            (inventory.carbon / 2 < inventory.hydrogen / 6 ? 
+             (inventory.carbon / 2 < inventory.oxygen ? inventory.carbon / 2 : inventory.oxygen) :
+             (inventory.hydrogen / 6 < inventory.oxygen ? inventory.hydrogen / 6 : inventory.oxygen)) : 0;
+        
+        max_drinks = (water_possible < co2_possible ? 
+                     (water_possible < alcohol_possible ? water_possible : alcohol_possible) :
+                     (co2_possible < alcohol_possible ? co2_possible : alcohol_possible));
     }
-
-    const char *drink = cmd + 4;
-    int amount = 0;
-
-    if (strncmp(drink, "SOFT DRINK", 10) == 0) {
-        // water + co2 + glucose
-        // CARBON 7 OXYGEN 9 HYDROGEN 14
-        int c = inventory.carbon / 7;
-        int o = inventory.oxygen / 9;
-        int h = inventory.hydrogen / 14;
-        amount = (c < o && c < h) ? c : ((o < h) ? o : h);
-    } else if (strncmp(drink, "VODKA", 5) == 0) {
-        // water + alcohol + glucose
-        // CARBON 8 OXYGEN 8 HYDROGEN 20
-        int c = inventory.carbon / 8;
-        int o = inventory.oxygen / 8;
-        int h = inventory.hydrogen / 20;
-        amount = (c < o && c < h) ? c : ((o < h) ? o : h);
-    } else if (strncmp(drink, "CHAMPAGNE", 9) == 0) {
-        // water + co2 + alcohol
-        // CARBON 3 OXYGEN 4 HYDROGEN 8
-        int c = inventory.carbon / 3;
-        int o = inventory.oxygen / 4;
-        int h = inventory.hydrogen / 8;
-        amount = (c < o && c < h) ? c : ((o < h) ? o : h);
-    } else {
-        printf("ERROR: Unknown drink type\n");
-        return;
-    }
-
-    printf("Can generate %d units of %s\n", amount, drink);
+    
+    return max_drinks;
 }
 
 // יצירת סוקטים
@@ -328,11 +371,14 @@ void handle_keyboard_input() {
     buffer[strcspn(buffer, "\n")] = '\0';
     
     if (strcmp(buffer, "GEN SOFT DRINK") == 0) {
-        handle_console_command("SOFT_DRINK");
+        unsigned long long max = calculate_max_drinks("SOFT_DRINK");
+        printf("Can generate %llu SOFT DRINK(s)\n", max);
     } else if (strcmp(buffer, "GEN VODKA") == 0) {
-        handle_console_command("VODKA");
+        unsigned long long max = calculate_max_drinks("VODKA");
+        printf("Can generate %llu VODKA(s)\n", max);
     } else if (strcmp(buffer, "GEN CHAMPAGNE") == 0) {
-        handle_console_command("CHAMPAGNE");
+        unsigned long long max = calculate_max_drinks("CHAMPAGNE");
+        printf("Can generate %llu CHAMPAGNE(s)\n", max);
     } else {
         printf("Invalid command. Use: GEN SOFT DRINK, GEN VODKA, or GEN CHAMPAGNE\n");
     }
@@ -350,7 +396,11 @@ void print_usage(const char *prog_name) {
     printf("  -t, --timeout <seconds>     Timeout in seconds\n");
     printf("  -s, --stream-path <path>    UDS stream socket path\n");
     printf("  -d, --datagram-path <path>  UDS datagram socket path\n");
+    printf("  -f, --file-path <path>  Inventory file path\n");
+
 }
+
+
 
 int main(int argc, char *argv[]) {
     int opt;
@@ -371,6 +421,7 @@ int main(int argc, char *argv[]) {
         {"timeout", required_argument, 0, 't'},
         {"stream-path", required_argument, 0, 's'},
         {"datagram-path", required_argument, 0, 'd'},
+        {"file", required_argument, 0, 'f'},
         {"help", no_argument, 0, '?'},
         {0, 0, 0, 0}
     };
@@ -400,6 +451,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'd':
                 uds_dgram_path = optarg;
+                break;
+            case 'f':
+                inventory_file_path = optarg;
                 break;
             case '?':
             default:

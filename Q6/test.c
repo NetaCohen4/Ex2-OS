@@ -1,3 +1,11 @@
+/*
+מה נשאר לעשות:
+1. לטפל ב mutex
+2. לעבור על כל הסעיפים של השאלה ולוודא שהכל עובד
+3. code coverage
+4. להוסיף הערות 
+
+*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,7 +20,9 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <sys/time.h>
-
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <pthread.h>
 
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 100
@@ -23,101 +33,251 @@ typedef struct {
     unsigned long long carbon;
     unsigned long long oxygen;
     unsigned long long hydrogen;
+    pthread_mutex_t mutex;
 } AtomInventory;
 
 // משתנים גלובליים
-AtomInventory inventory = {0, 0, 0};
+AtomInventory *inventory = NULL;
 int tcp_port = -1, udp_port = -1;
 char *uds_stream_path = NULL;
 char *uds_dgram_path = NULL;
+char *save_file_path = NULL;
 int timeout_seconds = 0;
+int save_fd = -1;
+int use_file_storage = 0;
 
 // פונקציות עזר למלאי
 void print_inventory() {
     printf("Current inventory: Carbon=%llu, Oxygen=%llu, Hydrogen=%llu\n", 
-           inventory.carbon, inventory.oxygen, inventory.hydrogen);
+           inventory->carbon, inventory->oxygen, inventory->hydrogen);
 }
 
-int add_atoms(const char *type, unsigned long long amount) {
-    if (strcmp(type, "CARBON") == 0) {
-        if (inventory.carbon + amount > MAX_ATOMS) return 0;
-        inventory.carbon += amount;
-    } else if (strcmp(type, "OXYGEN") == 0) {
-        if (inventory.oxygen + amount > MAX_ATOMS) return 0;
-        inventory.oxygen += amount;
-    } else if (strcmp(type, "HYDROGEN") == 0) {
-        if (inventory.hydrogen + amount > MAX_ATOMS) return 0;
-        inventory.hydrogen += amount;
-    } else {
-        return 0;
-    }
-    return 1;
-}
-
-int can_deliver_molecules(const char *molecule, unsigned long long amount) {
-    if (strcmp(molecule, "WATER") == 0) {
-        return (inventory.hydrogen >= 2 * amount && inventory.oxygen >= amount);
-    } else if (strcmp(molecule, "CARBON_DIOXIDE") == 0) {
-        return (inventory.carbon >= amount && inventory.oxygen >= 2 * amount);
-    } else if (strcmp(molecule, "GLUCOSE") == 0) {
-        return (inventory.carbon >= 6 * amount && 
-                inventory.hydrogen >= 12 * amount && 
-                inventory.oxygen >= 6 * amount);
-    } else if (strcmp(molecule, "ALCOHOL") == 0) {
-        return (inventory.carbon >= 2 * amount && 
-                inventory.hydrogen >= 6 * amount && 
-                inventory.oxygen >= amount);
-    }
-    return 0;
-}
-
-void deliver_molecules(const char *molecule, unsigned long long amount) {
-    if (strcmp(molecule, "WATER") == 0) {
-        inventory.hydrogen -= 2 * amount;
-        inventory.oxygen -= amount;
-    } else if (strcmp(molecule, "CARBON_DIOXIDE") == 0) {
-        inventory.carbon -= amount;
-        inventory.oxygen -= 2 * amount;
-    } else if (strcmp(molecule, "GLUCOSE") == 0) {
-        inventory.carbon -= 6 * amount;
-        inventory.hydrogen -= 12 * amount;
-        inventory.oxygen -= 6 * amount;
-    } else if (strcmp(molecule, "ALCOHOL") == 0) {
-        inventory.carbon -= 2 * amount;
-        inventory.hydrogen -= 6 * amount;
-        inventory.oxygen -= amount;
+void lock_inventory() {
+    if (use_file_storage) {
+        pthread_mutex_lock(&inventory->mutex);
     }
 }
 
-void handle_console_command(const char *cmd) {
-    if (strncmp(cmd, "GEN ", 4) != 0) {
-        printf("ERROR: Unknown console command\n");
+void unlock_inventory() {
+    if (use_file_storage) {
+        pthread_mutex_unlock(&inventory->mutex);
+    }
+}
+
+void do_work() { חלהקנלקאחהנק
+    // צריך לוודא שלפני כל נעילה קוראים לפנקציה הזאת 
+    // ולוודא שברגע שהמוטקס מת צריך לפעול בהתאם
+    int rc = pthread_mutex_lock(&inventory->mutex);
+    if (rc == EOWNERDEAD) {
+        printf("Owner died. Recovering...\n");
+
+        // תקני את הזיכרון המשותף אם צריך...
+
+        if ((rc = pthread_mutex_consistent(&inventory->mutex)) != 0) {
+            fprintf(stderr, "pthread_mutex_consistent failed: %s\n", strerror(rc));
+            pthread_mutex_unlock(&inventory->mutex);
+            return;
+        }
+    } else if (rc != 0) {
+        fprintf(stderr, "pthread_mutex_lock failed: %s\n", strerror(rc));
         return;
     }
 
-    const char *drink = cmd + 4;
+    // ✅ כאן את מחזיקה נעילה חוקית
+
+    // ... עבודה ...
+
+    pthread_mutex_unlock(&inventory->mutex);
+
+}
+
+void sync_from_file() {
+    if (!use_file_storage || save_fd == -1) return;
+    
+    // מסנכרן מהקובץ לזיכרון
+    if (msync(inventory, sizeof(AtomInventory), MS_SYNC) == -1) {
+        perror("msync");
+    }
+}
+
+void sync_to_file() {
+    if (!use_file_storage || save_fd == -1) return;
+    
+    // מסנכרן מהזיכרון לקובץ
+    if (msync(inventory, sizeof(AtomInventory), MS_SYNC) == -1) {
+        perror("msync");
+    }
+}
+
+int setup_file_storage() {
+    if (!save_file_path) return 0;
+    
+    use_file_storage = 1;
+    
+    // בדיקה אם הקובץ קיים
+    struct stat st;
+    int file_exists = (stat(save_file_path, &st) == 0);
+    
+    // פתיחת הקובץ
+    save_fd = open(save_file_path, O_RDWR | O_CREAT, 0666);
+    if (save_fd == -1) {
+        perror("open save file");
+        return -1;
+    }
+    
+    if (!file_exists) {
+
+        /*
+        AtomInventory empty_inventory = {0, 0, 0};
+        
+        // אתחול mutex עבור process-shared
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+        pthread_mutex_init(&empty_inventory.mutex, &attr);
+        pthread_mutexattr_destroy(&attr);
+        */
+
+        // קובץ חדש - יצירת מבנה ריק
+        AtomInventory empty_inventory = {0, 0, 0, PTHREAD_MUTEX_INITIALIZER};
+        if (write(save_fd, &empty_inventory, sizeof(AtomInventory)) != sizeof(AtomInventory)) {
+            perror("write to save file");
+            close(save_fd);
+            return -1;
+        }
+    }
+    
+    // הגדלת הקובץ לגודל הנדרש
+    if (ftruncate(save_fd, sizeof(AtomInventory)) == -1) {
+        perror("ftruncate");
+        close(save_fd);
+        return -1;
+    }
+    
+    // מיפוי הקובץ לזיכרון
+    inventory = mmap(NULL, sizeof(AtomInventory), PROT_READ | PROT_WRITE, 
+                    MAP_SHARED, save_fd, 0);
+    if (inventory == MAP_FAILED) {
+        perror("mmap");
+        close(save_fd);
+        return -1;
+    }
+    
+    // אם קובץ חדש, אתחול mutex
+    if (!file_exists) {
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+        pthread_mutex_init(&inventory->mutex, &attr);
+        pthread_mutexattr_destroy(&attr);
+    }
+    
+    return 0;
+}
+
+int add_atoms(const char *type, unsigned long long amount) {
+    lock_inventory();
+    sync_from_file();
+    int result = 0;
+    if (strcmp(type, "CARBON") == 0) {
+        if (inventory->carbon + amount <= MAX_ATOMS) {
+            inventory->carbon += amount;
+            result = 1;
+        }
+    } else if (strcmp(type, "OXYGEN") == 0) {
+        if (inventory->oxygen + amount <= MAX_ATOMS) {
+            inventory->oxygen += amount;
+            result = 1;
+        }
+    } else if (strcmp(type, "HYDROGEN") == 0) {
+        if (inventory->hydrogen + amount <= MAX_ATOMS) {
+            inventory->hydrogen += amount;
+            result = 1;
+        }
+    }
+    
+    if (result) {
+        sync_to_file();
+    }
+
+    unlock_inventory();
+    return result;
+}
+
+int can_deliver_molecules(const char *molecule, unsigned long long amount) {
+    lock_inventory();
+    sync_from_file();
+    
+    int result = 0;
+    if (strcmp(molecule, "WATER") == 0) {
+        result = (inventory->hydrogen >= 2 * amount && inventory->oxygen >= amount);
+    } else if (strcmp(molecule, "CARBON DIOXIDE") == 0) {
+        result = (inventory->carbon >= amount && inventory->oxygen >= 2 * amount);
+    } else if (strcmp(molecule, "GLUCOSE") == 0) {
+        result = (inventory->carbon >= 6 * amount && 
+                inventory->hydrogen >= 12 * amount && 
+                inventory->oxygen >= 6 * amount);
+    } else if (strcmp(molecule, "ALCOHOL") == 0) {
+        result = (inventory->carbon >= 2 * amount && 
+                inventory->hydrogen >= 6 * amount && 
+                inventory->oxygen >= amount);
+    }
+    
+    unlock_inventory();
+    return result;
+}
+
+void deliver_molecules(const char *molecule, unsigned long long amount) {
+    lock_inventory();
+    sync_from_file();
+    
+    if (strcmp(molecule, "WATER") == 0) {
+        inventory->hydrogen -= 2 * amount;
+        inventory->oxygen -= amount;
+    } else if (strcmp(molecule, "CARBON_DIOXIDE") == 0) {
+        inventory->carbon -= amount;
+        inventory->oxygen -= 2 * amount;
+    } else if (strcmp(molecule, "GLUCOSE") == 0) {
+        inventory->carbon -= 6 * amount;
+        inventory->hydrogen -= 12 * amount;
+        inventory->oxygen -= 6 * amount;
+    } else if (strcmp(molecule, "ALCOHOL") == 0) {
+        inventory->carbon -= 2 * amount;
+        inventory->hydrogen -= 6 * amount;
+        inventory->oxygen -= amount;
+    }
+    
+    sync_to_file();
+    unlock_inventory();
+}
+
+
+void handle_console_command(const char *drink) {
+
+    lock_inventory();
+    sync_from_file();
     int amount = 0;
 
     if (strncmp(drink, "SOFT DRINK", 10) == 0) {
         // water + co2 + glucose
         // CARBON 7 OXYGEN 9 HYDROGEN 14
-        int c = inventory.carbon / 7;
-        int o = inventory.oxygen / 9;
-        int h = inventory.hydrogen / 14;
+        int c = inventory->carbon / 7;
+        int o = inventory->oxygen / 9;
+        int h = inventory->hydrogen / 14;
         amount = (c < o && c < h) ? c : ((o < h) ? o : h);
     } else if (strncmp(drink, "VODKA", 5) == 0) {
         // water + alcohol + glucose
         // CARBON 8 OXYGEN 8 HYDROGEN 20
-        int c = inventory.carbon / 8;
-        int o = inventory.oxygen / 8;
-        int h = inventory.hydrogen / 20;
+        int c = inventory->carbon / 8;
+        int o = inventory->oxygen / 8;
+        int h = inventory->hydrogen / 20;
         amount = (c < o && c < h) ? c : ((o < h) ? o : h);
     } else if (strncmp(drink, "CHAMPAGNE", 9) == 0) {
         // water + co2 + alcohol
         // CARBON 3 OXYGEN 4 HYDROGEN 8
-        int c = inventory.carbon / 3;
-        int o = inventory.oxygen / 4;
-        int h = inventory.hydrogen / 8;
+        int c = inventory->carbon / 3;
+        int o = inventory->oxygen / 4;
+        int h = inventory->hydrogen / 8;
         amount = (c < o && c < h) ? c : ((o < h) ? o : h);
     } else {
         printf("ERROR: Unknown drink type\n");
@@ -125,9 +285,12 @@ void handle_console_command(const char *cmd) {
     }
 
     printf("Can generate %d units of %s\n", amount, drink);
+
+    sync_to_file();
+    unlock_inventory();
 }
 
-// יצירת סוקטים
+// יצירת סוקטים - ללא שינוי
 int setup_tcp_socket(int port) {
     int sockfd;
     struct sockaddr_in addr;
@@ -251,7 +414,6 @@ int handle_stream_client(int client_fd, int client_fds[]) {
     }
 
     buffer[nbytes] = '\0';
-    // הסרת \n אם קיים
     if (buffer[nbytes-1] == '\n') buffer[nbytes-1] = '\0';
 
     char command[64], atom_type[64];
@@ -288,15 +450,6 @@ void handle_dgram_socket(int dgram_fd, int is_uds) {
     buffer[nbytes] = '\0';
     if (buffer[nbytes-1] == '\n') buffer[nbytes-1] = '\0';
     
-    // if (is_uds) {
-    //     printf("UDS Datagram client sent: %s\n", buffer);
-    // } else {
-    //     struct sockaddr_in *sin = (struct sockaddr_in*)&client_addr;
-    //     char client_ip[INET_ADDRSTRLEN];
-    //     inet_ntop(AF_INET, &sin->sin_addr, client_ip, sizeof(client_ip));
-    //     printf("UDP client %s:%d sent: %s\n", client_ip, ntohs(sin->sin_port), buffer);
-    // }
-
     char command[64], molecule_type[64];
     unsigned long long amount;
     
@@ -324,7 +477,6 @@ void handle_keyboard_input() {
     char buffer[BUFFER_SIZE];
     if (fgets(buffer, sizeof(buffer), stdin) == NULL) return;
     
-    // הסרת \n
     buffer[strcspn(buffer, "\n")] = '\0';
     
     if (strcmp(buffer, "GEN SOFT DRINK") == 0) {
@@ -350,6 +502,24 @@ void print_usage(const char *prog_name) {
     printf("  -t, --timeout <seconds>     Timeout in seconds\n");
     printf("  -s, --stream-path <path>    UDS stream socket path\n");
     printf("  -d, --datagram-path <path>  UDS datagram socket path\n");
+    printf("  -f, --save-file <path>      Save file path for inventory\n");
+}
+
+void cleanup() {
+    if (use_file_storage && inventory != NULL) {
+        munmap(inventory, sizeof(AtomInventory));
+        inventory = NULL;
+    }
+    if (save_fd != -1) {
+        close(save_fd);
+        save_fd = -1;
+    }
+    if (uds_stream_path) {
+        unlink(uds_stream_path);
+    }
+    if (uds_dgram_path) {
+        unlink(uds_dgram_path);
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -358,6 +528,9 @@ int main(int argc, char *argv[]) {
     int client_fds[MAX_CLIENTS];
     fd_set read_fds, master_fds;
     int max_fd;
+    
+    // ערכי אתחול לאטומים
+    unsigned long long init_carbon = 0, init_oxygen = 0, init_hydrogen = 0;
     
     // אתחול מערך לקוחות
     for (int i = 0; i < MAX_CLIENTS; i++) client_fds[i] = -1;
@@ -371,11 +544,12 @@ int main(int argc, char *argv[]) {
         {"timeout", required_argument, 0, 't'},
         {"stream-path", required_argument, 0, 's'},
         {"datagram-path", required_argument, 0, 'd'},
+        {"save-file", required_argument, 0, 'f'},
         {"help", no_argument, 0, '?'},
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "T:U:c:o:h:t:s:d:?", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "T:U:c:o:h:t:s:d:f:?", long_options, NULL)) != -1) {
         switch (opt) {
             case 'T':
                 tcp_port = atoi(optarg);
@@ -384,13 +558,13 @@ int main(int argc, char *argv[]) {
                 udp_port = atoi(optarg);
                 break;
             case 'c':
-                inventory.carbon = strtoull(optarg, NULL, 10);
+                init_carbon = strtoull(optarg, NULL, 10);
                 break;
             case 'o':
-                inventory.oxygen = strtoull(optarg, NULL, 10);
+                init_oxygen = strtoull(optarg, NULL, 10);
                 break;
             case 'h':
-                inventory.hydrogen = strtoull(optarg, NULL, 10);
+                init_hydrogen = strtoull(optarg, NULL, 10);
                 break;
             case 't':
                 timeout_seconds = atoi(optarg);
@@ -400,6 +574,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'd':
                 uds_dgram_path = optarg;
+                break;
+            case 'f':
+                save_file_path = optarg;
                 break;
             case '?':
             default:
@@ -414,6 +591,40 @@ int main(int argc, char *argv[]) {
         print_usage(argv[0]);
         exit(EXIT_FAILURE);
     }
+
+    // הגדרת מיפוי קובץ או זיכרון רגיל
+    if (save_file_path) {
+        if (setup_file_storage() < 0) {
+            fprintf(stderr, "Error: Failed to setup file storage\n");
+            exit(EXIT_FAILURE);
+        }
+        
+        // אם הקובץ חדש, אתחול עם ערכים מהפרמטרים
+        struct stat st;
+        if (stat(save_file_path, &st) == 0 && st.st_size == sizeof(AtomInventory)) {
+            // קובץ קיים - לא משנים את הערכים
+        } else {
+            // אתחול עם ערכים מהפרמטרים
+            inventory->carbon = init_carbon;
+            inventory->oxygen = init_oxygen;
+            inventory->hydrogen = init_hydrogen;
+            sync_to_file();
+        }
+    } else {
+        // אתחול זיכרון רגיל
+        inventory = malloc(sizeof(AtomInventory));
+        if (!inventory) {
+            perror("malloc");
+            exit(EXIT_FAILURE);
+        }
+        inventory->carbon = init_carbon;
+        inventory->oxygen = init_oxygen;
+        inventory->hydrogen = init_hydrogen;
+        pthread_mutex_init(&inventory->mutex, NULL);
+    }
+
+    // רישום פונקציית ניקוי
+    atexit(cleanup);
 
     // יצירת סוקטים
     tcp_sock = setup_tcp_socket(tcp_port);
@@ -453,6 +664,7 @@ int main(int argc, char *argv[]) {
     printf(" - UDP port: %d\n", udp_port);
     if (uds_stream_sock >= 0) printf(" - UDS Stream: %s\n", uds_stream_path);
     if (uds_dgram_sock >= 0) printf(" - UDS Datagram: %s\n", uds_dgram_path);
+    if (save_file_path) printf(" - Save file: %s\n", save_file_path);
     if (timeout_seconds > 0) printf(" - Timeout: %d seconds\n", timeout_seconds);
     print_inventory();
 
@@ -460,7 +672,7 @@ int main(int argc, char *argv[]) {
     FD_ZERO(&master_fds);
     FD_SET(tcp_sock, &master_fds);
     FD_SET(udp_sock, &master_fds);
-    FD_SET(STDIN_FILENO, &master_fds); // מקלדת
+    FD_SET(STDIN_FILENO, &master_fds);
     
     max_fd = (tcp_sock > udp_sock) ? tcp_sock : udp_sock;
     
@@ -509,7 +721,6 @@ int main(int argc, char *argv[]) {
             socklen_t addr_len = sizeof(client_addr);
             int new_fd = accept(tcp_sock, (struct sockaddr*)&client_addr, &addr_len);
             if (new_fd >= 0) {
-                // הוספה למערך
                 int added = 0;
                 for (int i = 0; i < MAX_CLIENTS; i++) {
                     if (client_fds[i] == -1) {
@@ -525,6 +736,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        
         // חיבור UDS Stream חדש
         if (uds_stream_sock >= 0 && FD_ISSET(uds_stream_sock, &read_fds)) {
             struct sockaddr_un client_addr;
