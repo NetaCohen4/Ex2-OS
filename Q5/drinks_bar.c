@@ -254,7 +254,7 @@ int handle_stream_client(int client_fd, int client_fds[]) {
     // הסרת \n אם קיים
     if (buffer[nbytes-1] == '\n') buffer[nbytes-1] = '\0';
 
-    char command[64], atom_type[64];
+    char atom_type[64];
     unsigned long long amount;
     
     if (sscanf(buffer, "ADD %s %llu", atom_type, &amount) == 2) {
@@ -273,7 +273,7 @@ int handle_stream_client(int client_fd, int client_fds[]) {
 }
 
 // טיפול בפקודות UDP/UDS Datagram
-void handle_dgram_socket(int dgram_fd, int is_uds) {
+void handle_dgram_socket(int dgram_fd) {
     char buffer[BUFFER_SIZE];
     struct sockaddr_storage client_addr;
     socklen_t addr_len = sizeof(client_addr);
@@ -287,17 +287,8 @@ void handle_dgram_socket(int dgram_fd, int is_uds) {
 
     buffer[nbytes] = '\0';
     if (buffer[nbytes-1] == '\n') buffer[nbytes-1] = '\0';
-    
-    // if (is_uds) {
-    //     printf("UDS Datagram client sent: %s\n", buffer);
-    // } else {
-    //     struct sockaddr_in *sin = (struct sockaddr_in*)&client_addr;
-    //     char client_ip[INET_ADDRSTRLEN];
-    //     inet_ntop(AF_INET, &sin->sin_addr, client_ip, sizeof(client_ip));
-    //     printf("UDP client %s:%d sent: %s\n", client_ip, ntohs(sin->sin_port), buffer);
-    // }
 
-    char command[64], molecule_type[64];
+    char molecule_type[64];
     unsigned long long amount;
     
     if (sscanf(buffer, "DELIVER %s %llu", molecule_type, &amount) == 2) {
@@ -555,12 +546,12 @@ int main(int argc, char *argv[]) {
 
         // טיפול ב-UDP
         if (FD_ISSET(udp_sock, &read_fds)) {
-            handle_dgram_socket(udp_sock, 0);
+            handle_dgram_socket(udp_sock);
         }
 
         // טיפול ב-UDS Datagram
         if (uds_dgram_sock >= 0 && FD_ISSET(uds_dgram_sock, &read_fds)) {
-            handle_dgram_socket(uds_dgram_sock, 1);
+            handle_dgram_socket(uds_dgram_sock);
         }
     }
 
