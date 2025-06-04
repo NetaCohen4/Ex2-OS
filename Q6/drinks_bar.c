@@ -30,7 +30,7 @@
 #define MAX_CLIENTS 100
 #define MAX_ATOMS 1000000000000000000ULL // 10^18
 
-// מבנה לשמירת מלאי האטומים
+
 typedef struct {
     unsigned long long carbon;
     unsigned long long oxygen;
@@ -38,7 +38,7 @@ typedef struct {
     pthread_mutex_t mutex;
 } AtomInventory;
 
-// משתנים גלובליים
+// Global variables
 AtomInventory *inventory = NULL;
 int tcp_port = -1, udp_port = -1;
 char *uds_stream_path = NULL;
@@ -74,15 +74,7 @@ void do_work() {
     }
 }
 
-void sync_from_file() {
-    if (!use_file_storage || save_fd == -1) return;
-    
-    // מסנכרן מהקובץ לזיכרון
-    if (msync(inventory, sizeof(AtomInventory), MS_SYNC) == -1) {
-        perror("msync");
-    }
-}
-
+// Write from RAM to DISK (sync)
 void sync_to_file() {
     if (!use_file_storage || save_fd == -1) return;
     
@@ -109,18 +101,6 @@ int setup_file_storage() {
     }
     
     if (!file_exists) {
-
-        /*
-        AtomInventory empty_inventory = {0, 0, 0};
-        
-        // אתחול mutex עבור process-shared
-        pthread_mutexattr_t attr;
-        pthread_mutexattr_init(&attr);
-        pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
-        pthread_mutex_init(&empty_inventory.mutex, &attr);
-        pthread_mutexattr_destroy(&attr);
-        */
-
         // קובץ חדש - יצירת מבנה ריק
         AtomInventory empty_inventory = {inventory->carbon, inventory->oxygen, inventory->hydrogen, PTHREAD_MUTEX_INITIALIZER};
         if (write(save_fd, &empty_inventory, sizeof(AtomInventory)) != sizeof(AtomInventory)) {
@@ -155,7 +135,8 @@ int setup_file_storage() {
         pthread_mutex_init(&inventory->mutex, &attr);
         pthread_mutexattr_destroy(&attr);
     }
-    
+
+    sync_to_file();
     
     return 0;
 }
@@ -163,7 +144,6 @@ int setup_file_storage() {
 int add_atoms(const char *type, unsigned long long amount) {
     do_work();
     lock_inventory();
-    sync_from_file();
     int result = 0;
     if (strcmp(type, "CARBON") == 0) {
         if (inventory->carbon + amount <= MAX_ATOMS) {
@@ -193,7 +173,6 @@ int add_atoms(const char *type, unsigned long long amount) {
 int can_deliver_molecules(const char *molecule, unsigned long long amount) {
     do_work();
     lock_inventory();
-    sync_from_file();
     
     int result = 0;
     if (strcmp(molecule, "WATER") == 0) {
@@ -217,7 +196,6 @@ int can_deliver_molecules(const char *molecule, unsigned long long amount) {
 void deliver_molecules(const char *molecule, unsigned long long amount) {
     do_work();
     lock_inventory();
-    sync_from_file();
     
     if (strcmp(molecule, "WATER") == 0) {
         inventory->hydrogen -= 2 * amount;
@@ -243,7 +221,6 @@ void deliver_molecules(const char *molecule, unsigned long long amount) {
 void handle_console_command(const char *drink) {
     do_work();
     lock_inventory();
-    sync_from_file();
     int amount = 0;
 
     if (strncmp(drink, "SOFT DRINK", 10) == 0) {
@@ -516,10 +493,13 @@ int main(int argc, char *argv[]) {
     int client_fds[MAX_CLIENTS];
     fd_set read_fds, master_fds;
     int max_fd;
-    
-    // ערכי אתחול לאטומים
-    unsigned long long init_carbon = 0, init_oxygen = 0, init_hydrogen = 0;
-    
+    inventory = malloc(sizeof(AtomInventory));
+    if (!inventory) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+
+
     // אתחול מערך לקוחות
     for (int i = 0; i < MAX_CLIENTS; i++) client_fds[i] = -1;
 
@@ -546,13 +526,13 @@ int main(int argc, char *argv[]) {
                 udp_port = atoi(optarg);
                 break;
             case 'c':
-                init_carbon = strtoull(optarg, NULL, 10);
+                inventory->carbon = strtoull(optarg, NULL, 10);
                 break;
             case 'o':
-                init_oxygen = strtoull(optarg, NULL, 10);
+                inventory->oxygen = strtoull(optarg, NULL, 10);
                 break;
             case 'h':
-                init_hydrogen = strtoull(optarg, NULL, 10);
+                inventory->hydrogen = strtoull(optarg, NULL, 10);
                 break;
             case 't':
                 timeout_seconds = atoi(optarg);
@@ -586,32 +566,9 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Error: Failed to setup file storage\n");
             exit(EXIT_FAILURE);
         }
-        
-        // אם הקובץ חדש, אתחול עם ערכים מהפרמטרים
-        struct stat st;
-        if (stat(save_file_path, &st) == 0 && st.st_size == sizeof(AtomInventory)) {
-            // קובץ קיים - לא משנים את הערכים
-        } else {
-            // אתחול עם ערכים מהפרמטרים
-            inventory->carbon = init_carbon;
-            inventory->oxygen = init_oxygen;
-            inventory->hydrogen = init_hydrogen;
-            sync_to_file();
-        }
-    } else {
-        // אתחול זיכרון רגיל
-        inventory = malloc(sizeof(AtomInventory));
-        if (!inventory) {
-            perror("malloc");
-            exit(EXIT_FAILURE);
-        }
-        inventory->carbon = init_carbon;
-        inventory->oxygen = init_oxygen;
-        inventory->hydrogen = init_hydrogen;
-        pthread_mutex_init(&inventory->mutex, NULL);
     }
 
-    // רישום פונקציית ניקוי
+    // Go over all the sockets and the file and clean what not necessary
     atexit(cleanup);
 
     // יצירת סוקטים
@@ -785,6 +742,7 @@ int main(int argc, char *argv[]) {
         unlink(uds_dgram_path);
         free(uds_dgram_path);
     }
+    free(inventory);
 
     return 0;
 }
