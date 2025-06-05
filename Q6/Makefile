@@ -1,7 +1,7 @@
-CC=gcc
-CFLAGS=-Wall -Wextra -std=c99 -fprofile-arcs -ftest-coverage -g
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c99 -fprofile-arcs -ftest-coverage -g
 CLIENTFLAG = -D_POSIX_C_SOURCE=200112L
-TARGETS=drinks_bar atom_supplier molecule_requester
+TARGETS = drinks_bar atom_supplier molecule_requester
 
 all: $(TARGETS)
 
@@ -18,19 +18,16 @@ clean:
 	rm -f $(TARGETS) *.gcda *.gcno *.gcov coverage.info
 	rm -rf coverage_html
 
-# Run coverage tools after executing your tests or programs
-coverage: $(TARGETS)
-	./drinks_bar -T 5555 -U 7777 -f file.txt -t 10 -c 100 -o 100 -h 100 || true
-	./atom_supplier -h 127.0.0.1 -p 5555 || true
-	./molecule_requester -h 127.0.0.1 -p 7777 || true
-	gcov *.c
+# הפקת דוח gcov לאחר הרצה ידנית
+#coverage-report:
+#	gcov *.c
+#
+# הפקת דוח HTML עם lcov/genhtml לאחר הרצה ידנית
+#coverage-html: coverage-report
+#	lcov --capture --directory . --output-file coverage.info --quiet
+#	genhtml coverage.info --output-directory coverage_html --quiet
+#	@echo "Open coverage_html/index.html in browser"
 
-# Optional: HTML report with lcov/genhtml
-coverage-html:
-	lcov --capture --directory . --output-file coverage.info
-	genhtml coverage.info --output-directory coverage_html
-	@echo "Open coverage_html/index.html in browser"
-
-coverage-clean:
-	rm -f *.gcda *.gcno *.gcov coverage.info
-	rm -rf coverage_html
+#coverage-clean:
+#	rm -f *.gcda *.gcno *.gcov coverage.info
+#	rm -rf coverage_html

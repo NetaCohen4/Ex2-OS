@@ -110,6 +110,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if (stream_path) {
+        unlink(stream_path);
+    }
+
     close(sockfd);
     return 0;
 }

@@ -129,9 +129,9 @@ int main(int argc, char *argv[]) {
         printf("Server response: %s", buffer);
     }
 
-    // if (uds_path) {
-    //     unlink(client_addr_un.sun_path);
-    // }
+    if (uds_path) {
+        unlink(serv_addr_un.sun_path);
+    }
 
     close(sockfd);
 

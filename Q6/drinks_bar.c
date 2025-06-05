@@ -1,9 +1,9 @@
 /*
 מה נשאר לעשות:
-1. לטפל ב mutex
 2. לעבור על כל הסעיפים של השאלה ולוודא שהכל עובד
 3. code coverage
 4. להוסיף הערות 
+5. ברגע שהרצנו קוד קוברג' גילינו שגיאות שצריך לטפל
 
 */
 
@@ -39,12 +39,13 @@ typedef struct {
 } AtomInventory;
 
 // Global variables
-AtomInventory *inventory = NULL;
+AtomInventory static_inventory = {0, 0, 0, PTHREAD_MUTEX_INITIALIZER};
+AtomInventory *inventory = &static_inventory;
 int tcp_port = -1, udp_port = -1;
 char *uds_stream_path = NULL;
 char *uds_dgram_path = NULL;
 char *save_file_path = NULL;
-int timeout_seconds = 0;
+int timeout = 0;
 int save_fd = -1;
 int use_file_storage = 0;
 
@@ -493,11 +494,12 @@ int main(int argc, char *argv[]) {
     int client_fds[MAX_CLIENTS];
     fd_set read_fds, master_fds;
     int max_fd;
-    inventory = malloc(sizeof(AtomInventory));
+    //inventory = malloc(sizeof(AtomInventory));
+    /*
     if (!inventory) {
         perror("malloc");
         exit(EXIT_FAILURE);
-    }
+    }*/
 
 
     // אתחול מערך לקוחות
@@ -535,7 +537,7 @@ int main(int argc, char *argv[]) {
                 inventory->hydrogen = strtoull(optarg, NULL, 10);
                 break;
             case 't':
-                timeout_seconds = atoi(optarg);
+                timeout = atoi(optarg);
                 break;
             case 's':
                 uds_stream_path = optarg;
@@ -598,22 +600,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // הגדרת timeout אם נדרש
-    struct timeval timeout;
-    struct timeval *timeout_ptr = NULL;
-    if (timeout_seconds > 0) {
-        timeout.tv_sec = timeout_seconds;
-        timeout.tv_usec = 0;
-        timeout_ptr = &timeout;
-    }
-
     printf("Server started:\n");
     printf(" - TCP port: %d\n", tcp_port);
     printf(" - UDP port: %d\n", udp_port);
     if (uds_stream_sock >= 0) printf(" - UDS Stream: %s\n", uds_stream_path);
     if (uds_dgram_sock >= 0) printf(" - UDS Datagram: %s\n", uds_dgram_path);
     if (save_file_path) printf(" - Save file: %s\n", save_file_path);
-    if (timeout_seconds > 0) printf(" - Timeout: %d seconds\n", timeout_seconds);
+    if (timeout > 0) printf(" - Timeout: %d seconds\n", timeout);
     print_inventory();
 
     // הגדרת fd_set
@@ -633,8 +626,19 @@ int main(int argc, char *argv[]) {
         if (uds_dgram_sock > max_fd) max_fd = uds_dgram_sock;
     }
 
+    time_t last_activity = time(NULL);
     // לולאת השרת הראשית
     while (1) {
+
+        // Check timeout BEFORE select()
+        if (timeout > 0) {
+            time_t now = time(NULL);
+            if (difftime(now, last_activity) >= timeout) {
+                printf("Timeout reached with no activity. Exiting.\n");
+                break;
+            }
+        }
+
         read_fds = master_fds;
         
         // הוספת לקוחות מחוברים לסט
@@ -645,22 +649,43 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        int activity = select(max_fd + 1, &read_fds, NULL, NULL, timeout_ptr);
         
-        if (activity < 0) {
-            if (errno == EINTR) continue;
-            perror("select");
-            break;
+        struct timeval tv;
+        if (timeout > 0) {
+            time_t now = time(NULL);
+            int time_left = timeout - (int)difftime(now, last_activity);
+            if (time_left <= 0) {
+                printf("Timeout reached with no activity. Exiting.\n");
+                break;
+            }
+            tv.tv_sec = time_left;
+            tv.tv_usec = 0;
+        } else {
+            tv.tv_sec = 1;
+            tv.tv_usec = 0;
         }
+
+        int activity = select(max_fd + 1, &read_fds, NULL, NULL, &tv);
         
-        if (activity == 0) {
-            printf("Timeout reached, shutting down server\n");
-            break;
+        if (activity < 0 && errno != EINTR) {
+            perror("select error");
+            continue;
+        }
+
+        // If select() timed out and we have a timeout set, check if we should exit
+        if (activity == 0 && timeout > 0) {
+            time_t now = time(NULL);
+            if (difftime(now, last_activity) >= timeout) {
+                printf("Timeout reached with no activity. Exiting.\n");
+                break;
+            }
+            continue; // Go back to the beginning of the loop
         }
 
         // קלט מהמקלדת
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             handle_keyboard_input();
+            last_activity = time(NULL);
         }
 
         // חיבור TCP חדש
@@ -710,17 +735,20 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (client_fds[i] != -1 && FD_ISSET(client_fds[i], &read_fds)) {
                 handle_stream_client(client_fds[i], client_fds);
+                last_activity = time(NULL);
             }
         }
 
         // טיפול ב-UDP
         if (FD_ISSET(udp_sock, &read_fds)) {
             handle_dgram_socket(udp_sock);
+            last_activity = time(NULL);
         }
 
         // טיפול ב-UDS Datagram
         if (uds_dgram_sock >= 0 && FD_ISSET(uds_dgram_sock, &read_fds)) {
             handle_dgram_socket(uds_dgram_sock);
+            last_activity = time(NULL);
         }
     }
 
@@ -742,7 +770,7 @@ int main(int argc, char *argv[]) {
         unlink(uds_dgram_path);
         free(uds_dgram_path);
     }
-    free(inventory);
+    //free(inventory);
 
     return 0;
 }
