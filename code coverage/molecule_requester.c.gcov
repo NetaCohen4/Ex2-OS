@@ -1,0 +1,146 @@
+        -:    0:Source:molecule_requester.c
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <getopt.h>
+        -:    6:#include <arpa/inet.h>
+        -:    7:#include <netdb.h>
+        -:    8:#include <sys/socket.h>
+        -:    9:#include <sys/un.h>
+        -:   10:#include <signal.h>
+        -:   11:
+        -:   12:#define BUFFER_SIZE 1024
+        -:   13:
+    #####:   14:void usage(const char *prog) {
+    #####:   15:    fprintf(stderr, "Usage:\n");
+    #####:   16:    fprintf(stderr, "  %s -h <host> -p <port>       (UDP IPv4)\n", prog);
+    #####:   17:    fprintf(stderr, "  %s -f <uds_path>             (UDS Datagram)\n", prog);
+    #####:   18:    exit(EXIT_FAILURE);
+        -:   19:}
+        -:   20:
+        -:   21:
+        2:   22:int main(int argc, char *argv[]) {
+        -:   23:    
+        2:   24:    signal(SIGINT, exit);   // Ctrl+C
+        2:   25:    signal(SIGTERM, exit);  // kill (ללא -9)
+        -:   26:
+        2:   27:    char *hostname = NULL;
+        2:   28:    int port = -1;
+        2:   29:    char *uds_path = NULL;
+        -:   30:
+        -:   31:    int opt;
+        5:   32:    while ((opt = getopt(argc, argv, "h:p:f:")) != -1) {
+        3:   33:        switch (opt) {
+        1:   34:            case 'h': hostname = optarg; break;
+        1:   35:            case 'p': port = atoi(optarg); break;
+        1:   36:            case 'f': uds_path = optarg; break;
+    #####:   37:            default: usage(argv[0]);
+        -:   38:        }
+        -:   39:    }
+        -:   40:
+        -:   41:    // וידוא פרמטרים תקינים: או uds_path או host+port, לא שניהם
+        2:   42:    if ((uds_path && (hostname || port != -1)) || (!uds_path && (!hostname || port == -1))) {
+    #####:   43:        usage(argv[0]);
+        -:   44:    }
+        -:   45:
+        -:   46:    int sockfd;
+        -:   47:    struct sockaddr_in serv_addr_in;
+        -:   48:    struct sockaddr_un serv_addr_un;
+        -:   49:    struct sockaddr *serv_addr;
+        -:   50:    socklen_t serv_addr_len;
+        -:   51:
+        2:   52:    if (uds_path) {
+        -:   53:        // יצירת סוקט UDS Datagram
+        1:   54:        sockfd = socket(AF_UNIX, SOCK_DGRAM, 0);
+        1:   55:        if (sockfd < 0) {
+    #####:   56:            perror("socket");
+    #####:   57:            exit(EXIT_FAILURE);
+        -:   58:        }
+        -:   59:
+        -:   60:        struct sockaddr_un client_addr_un;
+        1:   61:        memset(&client_addr_un, 0, sizeof(client_addr_un));
+        1:   62:        client_addr_un.sun_family = AF_UNIX;
+        -:   63:
+        -:   64:        // Create a unique temporary client socket path
+        1:   65:        snprintf(client_addr_un.sun_path, sizeof(client_addr_un.sun_path), "/tmp/client_%d.sock", getpid());
+        -:   66:
+        -:   67:        // Unlink in case it already exists
+        1:   68:        unlink(client_addr_un.sun_path);
+        -:   69:
+        -:   70:        // Bind the client socket to the local address
+        1:   71:        if (bind(sockfd, (struct sockaddr *)&client_addr_un, sizeof(client_addr_un)) < 0) {
+    #####:   72:            perror("bind");
+    #####:   73:            close(sockfd);
+    #####:   74:            exit(EXIT_FAILURE);
+        -:   75:        }
+        -:   76:
+        -:   77:        // Prepare server address
+        1:   78:        memset(&serv_addr_un, 0, sizeof(serv_addr_un));
+        1:   79:        serv_addr_un.sun_family = AF_UNIX;
+        1:   80:        strncpy(serv_addr_un.sun_path, uds_path, sizeof(serv_addr_un.sun_path) - 1);
+        -:   81:
+        1:   82:        serv_addr = (struct sockaddr *)&serv_addr_un;
+        1:   83:        serv_addr_len = sizeof(serv_addr_un);
+        -:   84:
+        -:   85:
+        1:   86:        serv_addr = (struct sockaddr *)&serv_addr_un;
+        1:   87:        serv_addr_len = sizeof(serv_addr_un);
+        -:   88:    } else {
+        -:   89:        // יצירת סוקט UDP IPv4
+        1:   90:        sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+        1:   91:        if (sockfd < 0) {
+    #####:   92:            perror("socket");
+    #####:   93:            exit(EXIT_FAILURE);
+        -:   94:        }
+        -:   95:
+        1:   96:        struct hostent *server = gethostbyname(hostname);
+        1:   97:        if (!server) {
+    #####:   98:            fprintf(stderr, "Error: no such host %s\n", hostname);
+    #####:   99:            exit(EXIT_FAILURE);
+        -:  100:        }
+        -:  101:
+        1:  102:        memset(&serv_addr_in, 0, sizeof(serv_addr_in));
+        1:  103:        serv_addr_in.sin_family = AF_INET;
+        1:  104:        serv_addr_in.sin_port = htons(port);
+        1:  105:        memcpy(&serv_addr_in.sin_addr.s_addr, server->h_addr_list[0], server->h_length);
+        -:  106:
+        1:  107:        serv_addr = (struct sockaddr *)&serv_addr_in;
+        1:  108:        serv_addr_len = sizeof(serv_addr_in);
+        -:  109:    }
+        -:  110:
+        -:  111:    char buffer[BUFFER_SIZE];
+        2:  112:    printf("Enter molecule request (DELIVER WATER / CARBON DIOXIDE / ALCOHOL / GLUCOSE): \n");
+        -:  113:
+       12:  114:    while (fgets(buffer, BUFFER_SIZE, stdin)) {
+        -:  115:        // הסרת תו שורה חדשה
+       10:  116:        buffer[strcspn(buffer, "\n")] = '\0';
+        -:  117:
+      10*:  118:        if (strlen(buffer) == 0) break; // יציאה אם שורה ריקה
+        -:  119:
+        -:  120:        // שליחת הפקודה לשרת
+       10:  121:        ssize_t sent = sendto(sockfd, buffer, strlen(buffer), 0, serv_addr, serv_addr_len);
+       10:  122:        if (sent < 0) {
+    #####:  123:            perror("sendto");
+    #####:  124:            break;
+        -:  125:        }
+        -:  126:
+        -:  127:        // קבלת תגובה מהשרת
+       10:  128:        ssize_t n = recvfrom(sockfd, buffer, BUFFER_SIZE - 1, 0, NULL, NULL);
+       10:  129:        if (n < 0) {
+    #####:  130:            perror("recvfrom");
+    #####:  131:            break;
+        -:  132:        }
+        -:  133:
+       10:  134:        buffer[n] = '\0';  // סיום מחרוזת
+       10:  135:        printf("Server response: %s", buffer);
+        -:  136:    }
+        -:  137:
+    #####:  138:    if (uds_path) {
+    #####:  139:        unlink(serv_addr_un.sun_path);
+        -:  140:    }
+        -:  141:
+    #####:  142:    close(sockfd);
+        -:  143:
+    #####:  144:    return 0;
+        -:  145:}

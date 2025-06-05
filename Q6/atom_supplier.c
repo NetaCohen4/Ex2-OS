@@ -9,6 +9,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <errno.h>
+#include <signal.h>
+
 
 #define BUFFER_SIZE 1024
 
@@ -19,7 +21,12 @@ void usage(const char *progname) {
     exit(EXIT_FAILURE);
 }
 
+
 int main(int argc, char *argv[]) {
+    // for coverage:
+    signal(SIGINT, exit);   // Ctrl+C
+    signal(SIGTERM, exit);  // kill 
+
     char *hostname = NULL;
     int port = -1;
     char *stream_path = NULL;

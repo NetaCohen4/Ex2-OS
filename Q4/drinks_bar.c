@@ -80,7 +80,7 @@ int handle_command_udp(const char *cmd) {
         }
     }
     printf("ERROR: Invalid Command\n");
-    return -1; // Invalid command
+    return -1; 
 }
 
 void handle_console_command(const char *cmd) {
@@ -347,7 +347,6 @@ int main(int argc, char *argv[]) {
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
             char input[BUFFER_SIZE] = {0};
             if (fgets(input, BUFFER_SIZE, stdin) != NULL) {
-                // הסר תו ירידת שורה
                 input[strcspn(input, "\n")] = '\0';
                 handle_console_command(input);
                 last_activity = time(NULL);

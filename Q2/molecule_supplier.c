@@ -77,7 +77,7 @@ int handle_command_udp(const char *cmd) {
         }
     }
     printf("ERROR: Invalid Command\n");
-    return -1; // Invalid command
+    return -1; 
 }
 
 int main(int argc, char *argv[]) {

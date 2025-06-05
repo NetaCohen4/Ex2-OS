@@ -1,0 +1,127 @@
+        -:    0:Source:atom_supplier.c
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <arpa/inet.h>
+        -:    6:#include <netinet/in.h>  
+        -:    7:#include <netdb.h>
+        -:    8:#include <sys/types.h>
+        -:    9:#include <sys/socket.h>
+        -:   10:#include <sys/un.h>
+        -:   11:#include <errno.h>
+        -:   12:#include <signal.h>
+        -:   13:
+        -:   14:
+        -:   15:#define BUFFER_SIZE 1024
+        -:   16:
+    #####:   17:void usage(const char *progname) {
+    #####:   18:    fprintf(stderr, "Usage:\n");
+    #####:   19:    fprintf(stderr, "  %s -h <hostname> -p <port>        (for TCP/IP)\n", progname);
+    #####:   20:    fprintf(stderr, "  %s -f <stream_path>         (for UNIX socket)\n", progname);
+    #####:   21:    exit(EXIT_FAILURE);
+        -:   22:}
+        -:   23:
+        -:   24:
+        2:   25:int main(int argc, char *argv[]) {
+        -:   26:    
+        2:   27:    signal(SIGINT, exit);   // Ctrl+C
+        2:   28:    signal(SIGTERM, exit);  // kill (ללא -9)
+        -:   29:
+        2:   30:    char *hostname = NULL;
+        2:   31:    int port = -1;
+        2:   32:    char *stream_path = NULL;
+        2:   33:    int sockfd = -1;
+        -:   34:    char buffer[BUFFER_SIZE];
+        -:   35:
+        -:   36:    // Parse command-line arguments
+        5:   37:    for (int i = 1; i < argc; i++) {
+        3:   38:        if (strcmp(argv[i], "-h") == 0 && i + 1 < argc) {
+        1:   39:            hostname = argv[++i];
+        2:   40:        } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+        1:   41:            port = atoi(argv[++i]);
+        1:   42:        } else if (strcmp(argv[i], "-f") == 0 && i + 1 < argc) {
+        1:   43:            stream_path = argv[++i];
+        -:   44:        } else {
+    #####:   45:            usage(argv[0]);
+        -:   46:        }
+        -:   47:    }
+        -:   48:
+        -:   49:    // Validate args: must choose either -h/-p or -f
+        2:   50:    if ((hostname && stream_path) || (port > 0 && stream_path) ||
+        1:   51:        (!hostname && port <= 0 && !stream_path)) {
+    #####:   52:        usage(argv[0]);
+        -:   53:    }
+        -:   54:
+        2:   55:    if (stream_path) {
+        -:   56:        // ----------- UNIX DOMAIN SOCKET PATH (STREAM) -----------
+        -:   57:        struct sockaddr_un addr;
+        1:   58:        memset(&addr, 0, sizeof(struct sockaddr_un));
+        1:   59:        addr.sun_family = AF_UNIX;
+        1:   60:        strncpy(addr.sun_path, stream_path, sizeof(addr.sun_path) - 1);
+        -:   61:
+        1:   62:        sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+        1:   63:        if (sockfd == -1) {
+    #####:   64:            perror("socket");
+    #####:   65:            exit(EXIT_FAILURE);
+        -:   66:        }
+        -:   67:
+        1:   68:        if (connect(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr_un)) == -1) {
+    #####:   69:            perror("connect");
+    #####:   70:            close(sockfd);
+    #####:   71:            exit(EXIT_FAILURE);
+        -:   72:        }
+        -:   73:
+        1:   74:        printf("Connected via UNIX socket: %s\n", stream_path);
+        -:   75:
+        -:   76:    } else {
+        -:   77:        // -------------- TCP/IP CONNECTION -------------------
+        -:   78:        struct addrinfo hints, *res, *p;
+        -:   79:
+        1:   80:        memset(&hints, 0, sizeof(hints));
+        1:   81:        hints.ai_family = AF_INET;
+        1:   82:        hints.ai_socktype = SOCK_STREAM;
+        -:   83:
+        -:   84:        char port_str[10];
+        1:   85:        snprintf(port_str, sizeof(port_str), "%d", port);
+        -:   86:
+        1:   87:        if (getaddrinfo(hostname, port_str, &hints, &res) != 0) {
+    #####:   88:            perror("getaddrinfo");
+    #####:   89:            exit(EXIT_FAILURE);
+        -:   90:        }
+        -:   91:
+       1*:   92:        for (p = res; p != NULL; p = p->ai_next) {
+        1:   93:            sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+       1*:   94:            if (sockfd < 0) continue;
+        -:   95:
+        1:   96:            if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0) break;
+        -:   97:
+    #####:   98:            close(sockfd);
+        -:   99:        }
+        -:  100:
+        1:  101:        if (p == NULL) {
+    #####:  102:            fprintf(stderr, "Failed to connect to %s:%d\n", hostname, port);
+    #####:  103:            freeaddrinfo(res);
+    #####:  104:            exit(EXIT_FAILURE);
+        -:  105:        }
+        -:  106:
+        1:  107:        freeaddrinfo(res);
+        1:  108:        printf("Connected to %s:%d\n", hostname, port);
+        -:  109:    }
+        -:  110:
+        2:  111:    printf("Enter commands (ADD CARBON / OXYGEN / HYDROGEN):\n");
+        -:  112:
+        9:  113:    while (fgets(buffer, BUFFER_SIZE, stdin)) {
+        7:  114:        if (send(sockfd, buffer, strlen(buffer), 0) == -1) {
+    #####:  115:            perror("send");
+    #####:  116:            break;
+        -:  117:        }
+        -:  118:    }
+        -:  119:
+    #####:  120:    if (stream_path) {
+    #####:  121:        unlink(stream_path);
+        -:  122:    }
+        -:  123:
+    #####:  124:    close(sockfd);
+    #####:  125:    return 0;
+        -:  126:}

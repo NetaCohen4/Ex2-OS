@@ -45,8 +45,8 @@ int main(int argc, char *argv[]) {
         usage(argv[0]);
     }
 
+    // UNIX 
     if (stream_path) {
-        // ----------- UNIX DOMAIN SOCKET PATH (STREAM) -----------
         struct sockaddr_un addr;
         memset(&addr, 0, sizeof(struct sockaddr_un));
         addr.sun_family = AF_UNIX;
@@ -66,8 +66,9 @@ int main(int argc, char *argv[]) {
 
         printf("Connected via UNIX socket: %s\n", stream_path);
 
-    } else {
-        // -------------- TCP/IP CONNECTION -------------------
+
+    } else { // TCP
+        
         struct addrinfo hints, *res, *p;
 
         memset(&hints, 0, sizeof(hints));

@@ -19,21 +19,20 @@
 #define MAX_CLIENTS 100
 #define MAX_ATOMS 1000000000000000000ULL // 10^18
 
-// מבנה לשמירת מלאי האטומים
+// Atom struct
 typedef struct {
     unsigned long long carbon;
     unsigned long long oxygen;
     unsigned long long hydrogen;
 } AtomInventory;
 
-// משתנים גלובליים
+// global variables 
 AtomInventory inventory = {0, 0, 0};
 int tcp_port = -1, udp_port = -1;
 char *uds_stream_path = NULL;
 char *uds_dgram_path = NULL;
 int timeout = 0;
 
-// פונקציות עזר למלאי
 void print_inventory() {
     printf("Current inventory: Carbon=%llu, Oxygen=%llu, Hydrogen=%llu\n", 
            inventory.carbon, inventory.oxygen, inventory.hydrogen);
@@ -123,7 +122,7 @@ void handle_console_command(const char *drink) {
     printf("Can generate %d units of %s\n", amount, drink);
 }
 
-// יצירת סוקטים
+// create sockets 
 int setup_tcp_socket(int port) {
     int sockfd;
     struct sockaddr_in addr;
@@ -226,7 +225,7 @@ int setup_uds_dgram_socket(const char *path) {
     return sockfd;
 }
 
-// טיפול בפקודות TCP/UDS Stream
+//  TCP/UDS Stream
 int handle_stream_client(int client_fd, int client_fds[]) {
     char buffer[BUFFER_SIZE];
     ssize_t nbytes = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
@@ -236,7 +235,7 @@ int handle_stream_client(int client_fd, int client_fds[]) {
             perror("recv stream client");
         }
         close(client_fd);
-        // מסירה מהמערך
+        
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (client_fds[i] == client_fd) {
                 client_fds[i] = -1;
@@ -247,7 +246,6 @@ int handle_stream_client(int client_fd, int client_fds[]) {
     }
 
     buffer[nbytes] = '\0';
-    // הסרת \n אם קיים
     if (buffer[nbytes-1] == '\n') buffer[nbytes-1] = '\0';
 
     char atom_type[64];
@@ -268,7 +266,7 @@ int handle_stream_client(int client_fd, int client_fds[]) {
     return 0;
 }
 
-// טיפול בפקודות UDP/UDS Datagram
+//  UDP/UDS Datagram
 void handle_dgram_socket(int dgram_fd) {
     char buffer[BUFFER_SIZE];
     struct sockaddr_storage client_addr;
@@ -306,12 +304,11 @@ void handle_dgram_socket(int dgram_fd) {
     }
 }
 
-// טיפול בקלט מהמקלדת
+// handle keyboard
 void handle_keyboard_input() {
     char buffer[BUFFER_SIZE];
     if (fgets(buffer, sizeof(buffer), stdin) == NULL) return;
     
-    // הסרת \n
     buffer[strcspn(buffer, "\n")] = '\0';
     
     if (strcmp(buffer, "GEN SOFT DRINK") == 0) {
@@ -346,7 +343,7 @@ int main(int argc, char *argv[]) {
     fd_set read_fds, master_fds;
     int max_fd;
     
-    // אתחול מערך לקוחות
+    // init clients array
     for (int i = 0; i < MAX_CLIENTS; i++) client_fds[i] = -1;
 
     static struct option long_options[] = {
@@ -395,20 +392,22 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // בדיקת פרמטרים הכרחיים
     if (tcp_port == -1 || udp_port == -1) {
         fprintf(stderr, "Error: TCP port (-T) and UDP port (-U) are required\n");
         print_usage(argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    // יצירת סוקטים
+    // set up sockets
     tcp_sock = setup_tcp_socket(tcp_port);
-    if (tcp_sock < 0) exit(EXIT_FAILURE);
+    if (tcp_sock < 0) {
+        close(tcp_sock);
+        exit(EXIT_FAILURE);
+    } 
 
     udp_sock = setup_udp_socket(udp_port);
     if (udp_sock < 0) {
-        close(tcp_sock);
+        close(udp_sock);
         exit(EXIT_FAILURE);
     }
 
@@ -434,11 +433,10 @@ int main(int argc, char *argv[]) {
     if (timeout > 0) printf(" - Timeout: %d seconds\n", timeout);
     print_inventory();
 
-    // הגדרת fd_set
     FD_ZERO(&master_fds);
     FD_SET(tcp_sock, &master_fds);
     FD_SET(udp_sock, &master_fds);
-    FD_SET(STDIN_FILENO, &master_fds); // מקלדת
+    FD_SET(STDIN_FILENO, &master_fds);
     
     max_fd = (tcp_sock > udp_sock) ? tcp_sock : udp_sock;
     
@@ -452,7 +450,7 @@ int main(int argc, char *argv[]) {
     }
 
     time_t last_activity = time(NULL);
-    // לולאת השרת הראשית
+      
     while (1) {
 
         // Check timeout BEFORE select()
@@ -466,7 +464,7 @@ int main(int argc, char *argv[]) {
 
         read_fds = master_fds;
         
-        // הוספת לקוחות מחוברים לסט
+        // add clients  
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (client_fds[i] != -1) {
                 FD_SET(client_fds[i], &read_fds);
@@ -504,22 +502,21 @@ int main(int argc, char *argv[]) {
                 printf("Timeout reached with no activity. Exiting.\n");
                 break;
             }
-            continue; // Go back to the beginning of the loop
+            continue; 
         }
 
-        // קלט מהמקלדת
+        // keyboard 
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             handle_keyboard_input();
             last_activity = time(NULL);
         }
 
-        // חיבור TCP חדש
+        //  TCP 
         if (FD_ISSET(tcp_sock, &read_fds)) {
             struct sockaddr_in client_addr;
             socklen_t addr_len = sizeof(client_addr);
             int new_fd = accept(tcp_sock, (struct sockaddr*)&client_addr, &addr_len);
             if (new_fd >= 0) {
-                // הוספה למערך
                 int added = 0;
                 for (int i = 0; i < MAX_CLIENTS; i++) {
                     if (client_fds[i] == -1) {
@@ -535,7 +532,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // חיבור UDS Stream חדש
+        // UDP/UDS Stream 
         if (uds_stream_sock >= 0 && FD_ISSET(uds_stream_sock, &read_fds)) {
             struct sockaddr_un client_addr;
             socklen_t addr_len = sizeof(client_addr);
@@ -556,7 +553,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // טיפול בלקוחות stream & TCP קיימים
+        //   stream & TCP 
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (client_fds[i] != -1 && FD_ISSET(client_fds[i], &read_fds)) {
                 handle_stream_client(client_fds[i], client_fds);
@@ -564,20 +561,20 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // טיפול ב-UDP
+        //  UDP
         if (FD_ISSET(udp_sock, &read_fds)) {
             handle_dgram_socket(udp_sock);
             last_activity = time(NULL);
         }
 
-        // טיפול ב-UDS Datagram
+        // UDS Datagram
         if (uds_dgram_sock >= 0 && FD_ISSET(uds_dgram_sock, &read_fds)) {
             handle_dgram_socket(uds_dgram_sock);
             last_activity = time(NULL);
         }
     }
 
-    // ניקוי
+    // cleanup
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (client_fds[i] != -1) close(client_fds[i]);
     }
@@ -589,11 +586,11 @@ int main(int argc, char *argv[]) {
     
     if (uds_stream_path) {
         unlink(uds_stream_path);
-        //free(uds_stream_path);
+        free(uds_stream_path);
     }
     if (uds_dgram_path) {
         unlink(uds_dgram_path);
-        //free(uds_dgram_path);
+        free(uds_dgram_path);
     }
 
     return 0;

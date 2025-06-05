@@ -91,7 +91,7 @@ int main(int argc, char *argv[]) {
         FD_SET(server_fd, &readfds);
         max_fd = server_fd;
 
-        // הוספת כל הלקוחות למערך fd
+        // add all clients 
         for (int i = 0; i < MAX_CLIENTS; i++) {
             int sd = client_sockets[i];
             if (sd > 0)
@@ -100,21 +100,21 @@ int main(int argc, char *argv[]) {
                 max_fd = sd;
         }
 
-        // המתנה לפעילות
+        // waiting for action 
         int activity = select(max_fd + 1, &readfds, NULL, NULL, NULL);
         if (activity < 0 && errno != EINTR) {
             perror("select error");
             continue;
         }
 
-        // חיבור חדש נכנס
+        // new connection
         if (FD_ISSET(server_fd, &readfds)) {
             if ((new_socket = accept(server_fd, (struct sockaddr *)&address, &addrlen)) < 0) {
                 perror("accept");
                 continue;
             }
 
-            // מציאת מקום פנוי במערך
+            // finding place
             int added = 0;
             for (int i = 0; i < MAX_CLIENTS; i++) {
                 if (client_sockets[i] == -1) {
@@ -129,7 +129,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // בדיקת פעילות מלקוחות קיימים
+        // handle clients
         for (int i = 0; i < MAX_CLIENTS; i++) {
             int sd = client_sockets[i];
             if (sd != -1 && FD_ISSET(sd, &readfds)) {

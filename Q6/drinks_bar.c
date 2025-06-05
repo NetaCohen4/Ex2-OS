@@ -49,7 +49,6 @@ int timeout = 0;
 int save_fd = -1;
 int use_file_storage = 0;
 
-// פונקציות עזר למלאי
 void print_inventory() {
     printf("Current inventory: Carbon=%llu, Oxygen=%llu, Hydrogen=%llu\n", 
            inventory->carbon, inventory->oxygen, inventory->hydrogen);
@@ -57,21 +56,22 @@ void print_inventory() {
 
 void lock_inventory() {
     if (use_file_storage) {
-        pthread_mutex_lock(&inventory->mutex);
+        int rc = pthread_mutex_lock(&inventory->mutex);
+        if (rc == EOWNERDEAD) {
+            pthread_mutex_consistent(&inventory->mutex);
+        } else if (rc != 0) {
+            perror("pthread_mutex_lock");
+            exit(EXIT_FAILURE);
+        }
     }
 }
 
 void unlock_inventory() {
     if (use_file_storage) {
-        pthread_mutex_unlock(&inventory->mutex);
-    }
-}
-
-void do_work() {
-    int rc = pthread_mutex_trylock(&inventory->mutex);
-    if (rc == EOWNERDEAD) {
-        pthread_mutex_consistent(&inventory->mutex);
-        pthread_mutex_unlock(&inventory->mutex);
+        int rc = pthread_mutex_unlock(&inventory->mutex);
+        if (rc != 0) {
+            perror("pthread_mutex_unlock");
+        }
     }
 }
 
@@ -79,7 +79,6 @@ void do_work() {
 void sync_to_file() {
     if (!use_file_storage || save_fd == -1) return;
     
-    // מסנכרן מהזיכרון לקובץ
     if (msync(inventory, sizeof(AtomInventory), MS_SYNC) == -1) {
         perror("msync");
     }
@@ -90,11 +89,11 @@ int setup_file_storage() {
     
     use_file_storage = 1;
     
-    // בדיקה אם הקובץ קיים
+    // check if file exists
     struct stat st;
     int file_exists = (stat(save_file_path, &st) == 0);
     
-    // פתיחת הקובץ
+    // open file
     save_fd = open(save_file_path, O_RDWR | O_CREAT, 0666);
     if (save_fd == -1) {
         perror("open save file");
@@ -102,7 +101,7 @@ int setup_file_storage() {
     }
     
     if (!file_exists) {
-        // קובץ חדש - יצירת מבנה ריק
+        // new file - create an empty struct
         AtomInventory empty_inventory = {inventory->carbon, inventory->oxygen, inventory->hydrogen, PTHREAD_MUTEX_INITIALIZER};
         if (write(save_fd, &empty_inventory, sizeof(AtomInventory)) != sizeof(AtomInventory)) {
             perror("write to save file");
@@ -111,14 +110,12 @@ int setup_file_storage() {
         }
     }
     
-    // הגדלת הקובץ לגודל הנדרש
     if (ftruncate(save_fd, sizeof(AtomInventory)) == -1) {
         perror("ftruncate");
         close(save_fd);
         return -1;
     }
     
-    // מיפוי הקובץ לזיכרון
     inventory = mmap(NULL, sizeof(AtomInventory), PROT_READ | PROT_WRITE, 
                     MAP_SHARED, save_fd, 0);
     if (inventory == MAP_FAILED) {
@@ -127,7 +124,7 @@ int setup_file_storage() {
         return -1;
     }
     
-    // אם קובץ חדש, אתחול mutex
+    // init mutex
     if (!file_exists) {
         pthread_mutexattr_t attr;
         pthread_mutexattr_init(&attr);
@@ -143,7 +140,6 @@ int setup_file_storage() {
 }
 
 int add_atoms(const char *type, unsigned long long amount) {
-    do_work();
     lock_inventory();
     int result = 0;
     if (strcmp(type, "CARBON") == 0) {
@@ -172,7 +168,6 @@ int add_atoms(const char *type, unsigned long long amount) {
 }
 
 int can_deliver_molecules(const char *molecule, unsigned long long amount) {
-    do_work();
     lock_inventory();
     
     int result = 0;
@@ -195,13 +190,12 @@ int can_deliver_molecules(const char *molecule, unsigned long long amount) {
 }
 
 void deliver_molecules(const char *molecule, unsigned long long amount) {
-    do_work();
     lock_inventory();
     
     if (strcmp(molecule, "WATER") == 0) {
         inventory->hydrogen -= 2 * amount;
         inventory->oxygen -= amount;
-    } else if (strcmp(molecule, "CARBON_DIOXIDE") == 0) {
+    } else if (strcmp(molecule, "CARBON DIOXIDE") == 0) {
         inventory->carbon -= amount;
         inventory->oxygen -= 2 * amount;
     } else if (strcmp(molecule, "GLUCOSE") == 0) {
@@ -220,7 +214,6 @@ void deliver_molecules(const char *molecule, unsigned long long amount) {
 
 
 void handle_console_command(const char *drink) {
-    do_work();
     lock_inventory();
     int amount = 0;
 
@@ -247,6 +240,8 @@ void handle_console_command(const char *drink) {
         amount = (c < o && c < h) ? c : ((o < h) ? o : h);
     } else {
         printf("ERROR: Unknown drink type\n");
+        sync_to_file();
+        unlock_inventory();
         return;
     }
 
@@ -256,7 +251,7 @@ void handle_console_command(const char *drink) {
     unlock_inventory();
 }
 
-// יצירת סוקטים - ללא שינוי
+//  creates sockets 
 int setup_tcp_socket(int port) {
     int sockfd;
     struct sockaddr_in addr;
@@ -359,7 +354,7 @@ int setup_uds_dgram_socket(const char *path) {
     return sockfd;
 }
 
-// טיפול בפקודות TCP/UDS Stream
+// handle commands of  TCP/UDS Stream
 int handle_stream_client(int client_fd, int client_fds[]) {
     char buffer[BUFFER_SIZE];
     ssize_t nbytes = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
@@ -369,7 +364,7 @@ int handle_stream_client(int client_fd, int client_fds[]) {
             perror("recv stream client");
         }
         close(client_fd);
-        // מסירה מהמערך
+        
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (client_fds[i] == client_fd) {
                 client_fds[i] = -1;
@@ -400,7 +395,7 @@ int handle_stream_client(int client_fd, int client_fds[]) {
     return 0;
 }
 
-// טיפול בפקודות UDP/UDS Datagram
+// handle commands of UDP/UDS Datagram
 void handle_dgram_socket(int dgram_fd) {
     char buffer[BUFFER_SIZE];
     struct sockaddr_storage client_addr;
@@ -409,7 +404,7 @@ void handle_dgram_socket(int dgram_fd) {
     ssize_t nbytes = recvfrom(dgram_fd, buffer, sizeof(buffer) - 1, 0,
                               (struct sockaddr*)&client_addr, &addr_len);
     if (nbytes < 0) {
-        perror("recvfrom dgram");
+        perror("recv from dgram");
         return;
     }
 
@@ -419,7 +414,11 @@ void handle_dgram_socket(int dgram_fd) {
     char molecule_type[64];
     unsigned long long amount;
     
-    if (sscanf(buffer, "DELIVER %s %llu", molecule_type, &amount) == 2) {
+    if (sscanf(buffer, "DELIVER %63[^0-9] %llu", molecule_type, &amount) == 2) {
+        size_t len = strlen(molecule_type);
+        if (len > 0 && molecule_type[len - 1] == ' ') {
+            molecule_type[len - 1] = '\0';
+        }
         if (can_deliver_molecules(molecule_type, amount)) {
             deliver_molecules(molecule_type, amount);
             const char *response = "YES\n";
@@ -438,7 +437,7 @@ void handle_dgram_socket(int dgram_fd) {
     }
 }
 
-// טיפול בקלט מהמקלדת
+// hndle keyboard  
 void handle_keyboard_input() {
     char buffer[BUFFER_SIZE];
     if (fgets(buffer, sizeof(buffer), stdin) == NULL) return;
@@ -446,7 +445,7 @@ void handle_keyboard_input() {
     buffer[strcspn(buffer, "\n")] = '\0';
     
     if (strcmp(buffer, "GEN SOFT DRINK") == 0) {
-        handle_console_command("SOFT_DRINK");
+        handle_console_command("SOFT DRINK");
     } else if (strcmp(buffer, "GEN VODKA") == 0) {
         handle_console_command("VODKA");
     } else if (strcmp(buffer, "GEN CHAMPAGNE") == 0) {
@@ -488,21 +487,19 @@ void cleanup() {
     }
 }
 
+
 int main(int argc, char *argv[]) {
+    // for coverage:
+    signal(SIGINT, exit);   // Ctrl+C
+    signal(SIGTERM, exit);  // kill 
+
     int opt;
     int tcp_sock = -1, udp_sock = -1, uds_stream_sock = -1, uds_dgram_sock = -1;
     int client_fds[MAX_CLIENTS];
     fd_set read_fds, master_fds;
     int max_fd;
-    //inventory = malloc(sizeof(AtomInventory));
-    /*
-    if (!inventory) {
-        perror("malloc");
-        exit(EXIT_FAILURE);
-    }*/
 
-
-    // אתחול מערך לקוחות
+    // init client array
     for (int i = 0; i < MAX_CLIENTS; i++) client_fds[i] = -1;
 
     static struct option long_options[] = {
@@ -554,15 +551,13 @@ int main(int argc, char *argv[]) {
                 exit(EXIT_FAILURE);
         }
     }
-
-    // בדיקת פרמטרים הכרחיים
+  
     if (tcp_port == -1 || udp_port == -1) {
         fprintf(stderr, "Error: TCP port (-T) and UDP port (-U) are required\n");
         print_usage(argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    // הגדרת מיפוי קובץ או זיכרון רגיל
     if (save_file_path) {
         if (setup_file_storage() < 0) {
             fprintf(stderr, "Error: Failed to setup file storage\n");
@@ -573,7 +568,7 @@ int main(int argc, char *argv[]) {
     // Go over all the sockets and the file and clean what not necessary
     atexit(cleanup);
 
-    // יצירת סוקטים
+    // create sockets 
     tcp_sock = setup_tcp_socket(tcp_port);
     if (tcp_sock < 0) {
         close(tcp_sock);
@@ -609,7 +604,6 @@ int main(int argc, char *argv[]) {
     if (timeout > 0) printf(" - Timeout: %d seconds\n", timeout);
     print_inventory();
 
-    // הגדרת fd_set
     FD_ZERO(&master_fds);
     FD_SET(tcp_sock, &master_fds);
     FD_SET(udp_sock, &master_fds);
@@ -627,7 +621,7 @@ int main(int argc, char *argv[]) {
     }
 
     time_t last_activity = time(NULL);
-    // לולאת השרת הראשית
+
     while (1) {
 
         // Check timeout BEFORE select()
@@ -641,14 +635,13 @@ int main(int argc, char *argv[]) {
 
         read_fds = master_fds;
         
-        // הוספת לקוחות מחוברים לסט
+        // add clients
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (client_fds[i] != -1) {
                 FD_SET(client_fds[i], &read_fds);
                 if (client_fds[i] > max_fd) max_fd = client_fds[i];
             }
         }
-
         
         struct timeval tv;
         if (timeout > 0) {
@@ -679,16 +672,16 @@ int main(int argc, char *argv[]) {
                 printf("Timeout reached with no activity. Exiting.\n");
                 break;
             }
-            continue; // Go back to the beginning of the loop
+            continue; 
         }
 
-        // קלט מהמקלדת
+        // keyboard 
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             handle_keyboard_input();
             last_activity = time(NULL);
         }
 
-        // חיבור TCP חדש
+        // TCP
         if (FD_ISSET(tcp_sock, &read_fds)) {
             struct sockaddr_in client_addr;
             socklen_t addr_len = sizeof(client_addr);
@@ -710,7 +703,7 @@ int main(int argc, char *argv[]) {
         }
 
         
-        // חיבור UDS Stream חדש
+        //  UDS Stream
         if (uds_stream_sock >= 0 && FD_ISSET(uds_stream_sock, &read_fds)) {
             struct sockaddr_un client_addr;
             socklen_t addr_len = sizeof(client_addr);
@@ -731,7 +724,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // טיפול בלקוחות stream & TCP קיימים
+        //   stream & TCP 
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (client_fds[i] != -1 && FD_ISSET(client_fds[i], &read_fds)) {
                 handle_stream_client(client_fds[i], client_fds);
@@ -739,20 +732,20 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // טיפול ב-UDP
+        //  UDP
         if (FD_ISSET(udp_sock, &read_fds)) {
             handle_dgram_socket(udp_sock);
             last_activity = time(NULL);
         }
 
-        // טיפול ב-UDS Datagram
+        //  UDS Datagram
         if (uds_dgram_sock >= 0 && FD_ISSET(uds_dgram_sock, &read_fds)) {
             handle_dgram_socket(uds_dgram_sock);
             last_activity = time(NULL);
         }
     }
 
-    // ניקוי
+    // cleanup
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (client_fds[i] != -1) close(client_fds[i]);
     }
@@ -770,7 +763,6 @@ int main(int argc, char *argv[]) {
         unlink(uds_dgram_path);
         free(uds_dgram_path);
     }
-    //free(inventory);
 
     return 0;
 }

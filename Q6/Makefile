@@ -18,16 +18,17 @@ clean:
 	rm -f $(TARGETS) *.gcda *.gcno *.gcov coverage.info
 	rm -rf coverage_html
 
-# הפקת דוח gcov לאחר הרצה ידנית
-#coverage-report:
-#	gcov *.c
-#
-# הפקת דוח HTML עם lcov/genhtml לאחר הרצה ידנית
-#coverage-html: coverage-report
-#	lcov --capture --directory . --output-file coverage.info --quiet
-#	genhtml coverage.info --output-directory coverage_html --quiet
-#	@echo "Open coverage_html/index.html in browser"
 
-#coverage-clean:
-#	rm -f *.gcda *.gcno *.gcov coverage.info
-#	rm -rf coverage_html
+# after running manualy produce gcov report 
+coverage-report:
+	gcov *.c
+
+# after running manualy produce lcov/genhtml report with html
+coverage-html: coverage-report
+	lcov --capture --directory . --output-file coverage.info --quiet
+	genhtml coverage.info --output-directory coverage_html --quiet
+	@echo "Open coverage_html/index.html in browser"
+
+coverage-clean:
+	rm -f *.gcda *.gcno *.gcov coverage.info
+	rm -rf coverage_html

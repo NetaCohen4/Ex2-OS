@@ -32,7 +32,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // וידוא פרמטרים תקינים: או uds_path או host+port, לא שניהם
     if ((uds_path && (hostname || port != -1)) || (!uds_path && (!hostname || port == -1))) {
         usage(argv[0]);
     }
@@ -80,7 +79,7 @@ int main(int argc, char *argv[]) {
         serv_addr = (struct sockaddr *)&serv_addr_un;
         serv_addr_len = sizeof(serv_addr_un);
     } else {
-        // יצירת סוקט UDP IPv4
+        //   UDP IPv4 socket
         sockfd = socket(AF_INET, SOCK_DGRAM, 0);
         if (sockfd < 0) {
             perror("socket");
@@ -106,32 +105,28 @@ int main(int argc, char *argv[]) {
     printf("Enter molecule request (DELIVER WATER / CARBON DIOXIDE / ALCOHOL / GLUCOSE): \n");
 
     while (fgets(buffer, BUFFER_SIZE, stdin)) {
-        // הסרת תו שורה חדשה
         buffer[strcspn(buffer, "\n")] = '\0';
 
-        if (strlen(buffer) == 0) break; // יציאה אם שורה ריקה
+        if (strlen(buffer) == 0) break; 
 
-        // שליחת הפקודה לשרת
+        // send request to server
         ssize_t sent = sendto(sockfd, buffer, strlen(buffer), 0, serv_addr, serv_addr_len);
         if (sent < 0) {
             perror("sendto");
             break;
         }
 
-        // קבלת תגובה מהשרת
+        // get response from server
         ssize_t n = recvfrom(sockfd, buffer, BUFFER_SIZE - 1, 0, NULL, NULL);
         if (n < 0) {
             perror("recvfrom");
             break;
         }
 
-        buffer[n] = '\0';  // סיום מחרוזת
+        buffer[n] = '\0'; 
         printf("Server response: %s", buffer);
     }
 
-    // if (uds_path) {
-    //     unlink(client_addr_un.sun_path);
-    // }
 
     close(sockfd);
 

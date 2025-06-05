@@ -12,7 +12,7 @@ int main(int argc, char *argv[]) {
     char *hostname = NULL;
     int port = -1;
 
-    // ניתוח פרמטרים: -h <hostname/IP> -p <port>
+    // usage
     int opt;
     while ((opt = getopt(argc, argv, "h:p:")) != -1) {
         switch (opt) {
@@ -29,7 +29,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // יצירת סוקט UDP
+    // UDP socket
     int sockfd;
     struct sockaddr_in serv_addr;
     struct hostent *server;
@@ -51,7 +51,6 @@ int main(int argc, char *argv[]) {
     serv_addr.sin_port = htons(port);
     memcpy(&serv_addr.sin_addr.s_addr, server->h_addr_list[0], server->h_length);
 
-    // קלט מהמשתמש
     char buffer[BUFFER_SIZE];
     printf("Enter molecule request (DELIVER WATER / CARBON DIOXIDE / ALCOHOL / GLUCOSE): \n");
 
@@ -59,11 +58,11 @@ int main(int argc, char *argv[]) {
         // Remove newline character if present
         buffer[strcspn(buffer, "\n")] = '\0';
 
-        // שליחת הפקודה לשרת
+        // send to server
         sendto(sockfd, buffer, strlen(buffer), 0,
            (struct sockaddr *)&serv_addr, sizeof(serv_addr));
 
-        // קבלת תגובה מהשרת
+        // get respond from server
         socklen_t serv_len = sizeof(serv_addr);
         ssize_t n = recvfrom(sockfd, buffer, BUFFER_SIZE - 1, 0,
                              (struct sockaddr *)&serv_addr, &serv_len);
@@ -72,7 +71,7 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        buffer[n] = '\0';  // Null-terminate the response
+        buffer[n] = '\0';  
         printf("%s\n", buffer);
 
     }

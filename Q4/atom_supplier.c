@@ -59,7 +59,7 @@ int main(int argc, char *argv[]) {
         if (sockfd < 0) continue;
 
         if (connect(sockfd, (struct sockaddr *)addr, sizeof(*addr)) == 0) {
-            break; // Success
+            break; 
         }
 
         close(sockfd);
